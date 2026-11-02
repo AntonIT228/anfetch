@@ -1,0 +1,7 @@
+anfetch
+fetch
+*.o
+*.pkg.tar.zst
+pkg/
+src/
+*.tar.gz
