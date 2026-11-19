@@ -1021,12 +1021,12 @@ int main(int argc, char* argv[]) {
         logo_paths.push_back("/usr/share/anfetch/logos/tumbleweed.txt");
     }
     if (os_id == "opensuse-leap") {
-        logo_paths.push_back("logos/type1/opensuse.txt");
+        logo_paths.push_back("logos/opensuse.txt");
         logo_paths.push_back("/usr/share/anfetch/logos/opensuse.txt");
     }
     if (os_id == "ghostbsd") {
-        logo_paths.push_back("logos/type1/ghost.txt");
-        logo_paths.push_back("/usr/share/anfetch/logos/type1/ghost.txt");
+        logo_paths.push_back("logos/ghost.txt");
+        logo_paths.push_back("/usr/share/anfetch/logos/ghost.txt");
     }
     std::ifstream logo_file;
     for (const auto& path : logo_paths) {
