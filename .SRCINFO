@@ -1,13 +1,13 @@
 pkgbase = anfetch
 	pkgdesc = A simple, modular system fetch tool written in C++
-	pkgver = 1.3.1
+	pkgver = 1.4.1
 	pkgrel = 1
 	url = https://github.com/AntonIT228/anfetch
 	arch = x86_64
 	license = Unlicense
 	makedepends = gcc
 	depends = gcc-libs
-	source = https://github.com/AntonIT228/anfetch/archive/refs/tags/v1.3.1.tar.gz
-	sha256sums = 3d37abcbcda004056508785254131213b2851d0ff1405b633aaf7c2a12f9121e
+	source = https://github.com/AntonIT228/anfetch/archive/refs/tags/v1.4.1.tar.gz
+	sha256sums = 84188a872e5da9728c6ae195cd6cf84b9f75b5ed31459919e5517ce8aa60fc59
 
 pkgname = anfetch
