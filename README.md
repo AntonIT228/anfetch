@@ -1,3 +1,4 @@
+![Uploading 2026-11-19_19-55-31.png…]()
 # anfetch
 
 A simple, modular system fetch tool written in C++ for Arch Linux.
