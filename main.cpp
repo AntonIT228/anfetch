@@ -1028,7 +1028,7 @@ int main(int argc, char* argv[]) {
         logo_paths.push_back("logos/type1/ghost.txt");
         logo_paths.push_back("/usr/share/anfetch/logos/type1/ghost.txt");
     }
-
+    std::ifstream logo_file;
     for (const auto& path : logo_paths) {
         std::cout << "DEBUG: Trying " << path << std::endl;
         logo_file.open(path);
