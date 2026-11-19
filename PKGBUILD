@@ -9,7 +9,7 @@ license=('Unlicense')
 depends=('gcc-libs')
 makedepends=('gcc')
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('7ea26fd304154c5b905c0e1581e992f3c5c37f660b315294ff08fa85f4f05143')
+sha256sums=('1431c5cf33bc2d5a842bab9ef8c92ce214e957b9ea7e213a0911a46cdcad66a0')
 
 build() {
     cd "$pkgname-$pkgver"
