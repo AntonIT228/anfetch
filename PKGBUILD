@@ -1,6 +1,6 @@
 # Maintainer: AntonIT228 <zelenukanton225@gmail.com>
 pkgname=anfetch
-pkgver=1.4.1
+pkgver=1.4.3
 pkgrel=1
 pkgdesc="A simple, modular system fetch tool written in C++"
 arch=('x86_64')
