@@ -15,7 +15,11 @@ A simple, modular system fetch tool written in C++ for Arch Linux.
 
 ## Build
 
-g++ -O2 -std=c++17 main.cpp -o anfetch
+g++ -O2 -std=c++17 main.cpp -o anfetch or makepkg -si 
+
+## Via makepkg (Arch Linux)
+
+makepkg -si
 
 ## Usage
 
