@@ -996,8 +996,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::string> logo_paths = {
         "logos/" + os_id + ".txt",
-        "/usr/share/anfetch/logos/" + os_id + ".txt"
-        "/usr/local/share/anfetch/logos/" + os_id + ".txt",
+        "/usr/share/anfetch/logos/" + os_id + ".txt",
     };
 
     if (os_id.rfind("ubuntu", 0) == 0 || os_id == "ubuntu") {
