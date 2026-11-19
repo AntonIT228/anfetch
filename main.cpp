@@ -1029,7 +1029,6 @@ int main(int argc, char* argv[]) {
     }
     std::ifstream logo_file;
     for (const auto& path : logo_paths) {
-        std::cout << "DEBUG: Trying " << path << std::endl;
         logo_file.open(path);
         if (logo_file.is_open()) break;
     }
