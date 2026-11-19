@@ -1,7 +1,9 @@
-anfetch
 fetch
+sfetch
 *.o
-*.pkg.tar.zst
+
 pkg/
 src/
+*.pkg.tar.zst
 *.tar.gz
+

@@ -16,7 +16,12 @@
 #include <functional>
 #include <set>
 #include <regex>
-
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <unistd.h>
 
 namespace Color {
     constexpr const char* RESET = "\033[0m";
@@ -59,11 +64,11 @@ std::string get_os_name() {
 std::string get_host_model() {
     std::ifstream vendor_file("/sys/class/dmi/id/sys_vendor");
     std::ifstream product_file("/sys/class/dmi/id/product_name");
-    
+
     std::string vendor, product;
     if (vendor_file) std::getline(vendor_file, vendor);
     if (product_file) std::getline(product_file, product);
-    
+
     if (vendor.empty() && product.empty()) return "Unknown host";
     return vendor + " " + product;
 }
@@ -91,7 +96,7 @@ std::string get_os_id() {
 std::string get_cpu_info() {
     std::ifstream file("/proc/cpuinfo");
     if (!file.is_open()) return "Unknown CPU";
-    
+
     std::string line;
     while (std::getline(file, line)) {
         if (line.rfind("model name", 0) == 0) {
@@ -104,7 +109,99 @@ std::string get_cpu_info() {
     return "Unknown CPU";
 }
 
-std::string clean_gpu_name(std::string name) {
+std::string get_cpu_temperature() {
+    std::error_code ec;
+    std::string hwmon_dir = "/sys/class/hwmon";
+    
+    if (!std::filesystem::exists(hwmon_dir, ec) || ec) {
+        return "N/A";
+    }
+
+    double max_temp = 0.0;
+
+    for (const auto& entry : std::filesystem::directory_iterator(hwmon_dir, ec)) {
+        if (ec) break;
+        
+        std::string name_path = entry.path().string() + "/name";
+        std::ifstream name_file(name_path);
+        if (!name_file.is_open()) continue;
+        
+        std::string sensor_name;
+        std::getline(name_file, sensor_name);
+        name_file.close();
+
+        bool is_cpu_sensor = (sensor_name == "coretemp" || 
+                              sensor_name == "k10temp" || 
+                              sensor_name == "zenpower" ||
+                              sensor_name.find("cpu") != std::string::npos);
+
+        if (!is_cpu_sensor) continue;
+
+        for (const auto& file : std::filesystem::directory_iterator(entry.path(), ec)) {
+            if (ec) break;
+            std::string filename = file.path().filename().string();
+            
+            if (filename.rfind("temp", 0) == 0 && filename.find("_input") != std::string::npos) {
+                std::ifstream temp_file(file.path());
+                if (!temp_file.is_open()) continue;
+                
+                long long millidegrees = 0;
+                temp_file >> millidegrees;
+                temp_file.close();
+                
+                if (millidegrees > 0) {
+                    double celsius = millidegrees / 1000.0;
+                    if (celsius > max_temp) {
+                        max_temp = celsius;
+                    }
+                }
+            }
+        }
+    }
+
+    if (max_temp > 0.0) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1f °C", max_temp);
+        return std::string(buffer);
+    }
+
+    std::string thermal_dir = "/sys/class/thermal";
+    if (std::filesystem::exists(thermal_dir, ec) && !ec) {
+        for (const auto& entry : std::filesystem::directory_iterator(thermal_dir, ec)) {
+            if (ec) break;
+            std::string zone_name = entry.path().filename().string();
+            if (zone_name.rfind("thermal_zone", 0) != 0) continue;
+            
+            std::string type_path = entry.path().string() + "/type";
+            std::ifstream type_file(type_path);
+            if (!type_file.is_open()) continue;
+            
+            std::string type;
+            std::getline(type_file, type);
+            type_file.close();
+            
+            if (type.find("cpu") != std::string::npos || type.find("x86_pkg_temp") != std::string::npos) {
+                std::ifstream temp_file(entry.path().string() + "/temp");
+                if (!temp_file.is_open()) continue;
+                
+                long long millidegrees = 0;
+                temp_file >> millidegrees;
+                temp_file.close();
+                
+                if (millidegrees > 0) {
+                    double celsius = millidegrees / 1000.0;
+                    char buffer[32];
+                    std::snprintf(buffer, sizeof(buffer), "%.1f °C", celsius);
+                    return std::string(buffer);
+                }
+            }
+        }
+    }
+
+    return "N/A";
+}
+
+std::string gpu_info(std::string name) {
     size_t rev_pos = name.rfind(" (rev ");
     if (rev_pos != std::string::npos) {
         name.erase(rev_pos);
@@ -169,7 +266,7 @@ std::vector<std::string> get_gpu_list() {
                 name_file.close();
 
                 if (!gpu_name.empty()) {
-                    gpus.push_back(clean_gpu_name(gpu_name));
+                    gpus.push_back(gpu_info(gpu_name));
                 }
             }
         }
@@ -184,7 +281,7 @@ std::vector<std::string> get_gpu_list() {
                 if (!line.empty() && line.back() == '\n') line.pop_back();
                 size_t pos = line.rfind(':');
                 if (pos != std::string::npos) {
-                    gpus.push_back(clean_gpu_name(line.substr(pos + 2)));
+                    gpus.push_back(gpu_info(line.substr(pos + 2)));
                 }
             }
             pclose(pipe);
@@ -192,6 +289,101 @@ std::vector<std::string> get_gpu_list() {
     }
 
     return gpus;
+}
+
+std::string get_gpu_temperature(size_t gpu_index) {
+    auto gpus = get_gpu_list();
+    if (gpu_index >= gpus.size()) return "N/A";
+    
+    std::string gpu_name = gpus[gpu_index];
+    std::error_code ec;
+    
+    if (gpu_name.find("NVIDIA") != std::string::npos) {
+        size_t nvidia_idx = 0;
+        for (size_t i = 0; i < gpu_index; ++i) {
+            if (gpus[i].find("NVIDIA") != std::string::npos) nvidia_idx++;
+        }
+        
+        std::string cmd = "nvidia-smi -i " + std::to_string(nvidia_idx) + 
+                          " --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (pipe) {
+            char buffer[128];
+            std::string val;
+            if (fgets(buffer, sizeof(buffer), pipe) != nullptr) val = buffer;
+            pclose(pipe);
+            
+            while (!val.empty() && (val.back() == '\n' || val.back() == '\r' || val.back() == ' '))
+                val.pop_back();
+            
+            bool is_number = !val.empty() && std::all_of(val.begin(), val.end(), [](char c) {
+                return std::isdigit(c) || c == '.';
+            });
+            
+            if (is_number) {
+                double temp = std::stod(val);
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.1f °C", temp);
+                return std::string(buf);
+            }
+        }
+        return "N/A";
+    }
+    
+    std::string hwmon_dir = "/sys/class/hwmon";
+    if (!std::filesystem::exists(hwmon_dir, ec) || ec) return "N/A";
+    
+    std::string target_sensor;
+    if (gpu_name.find("Intel") != std::string::npos) {
+        target_sensor = "i915";
+    } else if (gpu_name.find("AMD") != std::string::npos || gpu_name.find("Radeon") != std::string::npos) {
+        target_sensor = "amdgpu";
+    } else {
+        target_sensor = "gpu";
+    }
+    
+    for (const auto& entry : std::filesystem::directory_iterator(hwmon_dir, ec)) {
+        if (ec) break;
+        
+        std::ifstream name_file(entry.path().string() + "/name");
+        if (!name_file.is_open()) continue;
+        std::string sensor_name;
+        std::getline(name_file, sensor_name);
+        name_file.close();
+        
+        bool match = (sensor_name == target_sensor) ||
+                     (target_sensor == "i915" && sensor_name == "xe") ||
+                     (target_sensor == "gpu" && sensor_name.find("gpu") != std::string::npos);
+        
+        if (!match) continue;
+        
+        std::ifstream temp_file(entry.path().string() + "/temp1_input");
+        if (!temp_file.is_open()) {
+            for (const auto& file : std::filesystem::directory_iterator(entry.path(), ec)) {
+                if (ec) break;
+                std::string filename = file.path().filename().string();
+                if (filename.rfind("temp", 0) == 0 && filename.find("_input") != std::string::npos) {
+                    temp_file.open(file.path());
+                    if (temp_file.is_open()) break;
+                }
+            }
+        }
+        
+        if (!temp_file.is_open()) continue;
+        
+        long long millidegrees = 0;
+        temp_file >> millidegrees;
+        temp_file.close();
+        
+        if (millidegrees > 0) {
+            double celsius = millidegrees / 1000.0;
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%.1f °C", celsius);
+            return std::string(buffer);
+        }
+    }
+    
+    return "N/A";
 }
 
 std::string get_ram_info() {
@@ -213,10 +405,7 @@ std::string get_ram_info() {
             std::string trash;
             ss >> trash >> avail_kb;
         }
-
-        if (total_kb > 0 && avail_kb > 0) {
-            break;
-        }
+        if (total_kb > 0 && avail_kb > 0) break;
     }
     file.close();
 
@@ -228,8 +417,14 @@ std::string get_ram_info() {
     double used_gib  = (double)used_kb  / 1048576.0;
     int percentage_ram = (total_gib > 0) ? (int)((used_gib / total_gib) * 100.0) : 0;
 
-    char result[64];
-    std::snprintf(result, sizeof(result), "%.1f GiB / %.1f GiB (%d%%)", used_gib, total_gib, percentage_ram);
+    const char* pct_color;
+    if (percentage_ram >= 80) pct_color = Color::RED;
+    else if (percentage_ram >= 50) pct_color = Color::YELLOW;
+    else pct_color = Color::GREEN;
+
+    char result[128];
+    std::snprintf(result, sizeof(result), "%.1f GiB / %.1f GiB (%s%d%%%s)", 
+                  used_gib, total_gib, pct_color, percentage_ram, Color::RESET);
 
     return std::string(result);
 }
@@ -320,14 +515,13 @@ std::vector<std::string> get_storage_info() {
         mountpoint = unescape_mount_path(mountpoint);
 
         if (!is_real_filesystem(fstype)) continue;
-
         if (host.rfind("/dev/loop", 0) == 0) continue;
         if (mountpoint.rfind("/snap/", 0) == 0) continue;
         if (mountpoint == "/boot" || mountpoint == "/boot/efi" ||
             mountpoint == "/efi" || mountpoint == "/var/lib/docker") continue;
-
         if (seen_hosts.count(host)) continue;
         if (seen_mounts.count(mountpoint)) continue;
+
         seen_hosts.insert(host);
         seen_mounts.insert(mountpoint);
 
@@ -342,16 +536,24 @@ std::vector<std::string> get_storage_info() {
         double used_gib  = total_gib - free_gib;
         int percentage_storage = (total_gib > 0) ? (int)((used_gib / total_gib) * 100.0) : 0;
 
+        const char* pct_color;
+        if (percentage_storage >= 80) pct_color = Color::RED;
+        else if (percentage_storage >= 50) pct_color = Color::YELLOW;
+        else pct_color = Color::GREEN;
+
         char buffer[512];
         if (mountpoint == "/") {
             std::snprintf(buffer, sizeof(buffer),
-                          "%.2f GiB / %.2f GiB (%d%%) (%s)",
-                          used_gib, total_gib, percentage_storage, fstype.c_str());
+                          "%.2f GiB / %.2f GiB (%s%d%%%s) (%s)",
+                          used_gib, total_gib, 
+                          pct_color, percentage_storage, Color::RESET, 
+                          fstype.c_str());
         } else {
             std::snprintf(buffer, sizeof(buffer),
-                          "%.2f GiB / %.2f GiB (%d%%) (%s) @ (%s)",
-                          used_gib, total_gib, percentage_storage, fstype.c_str(),
-                          mountpoint.c_str());
+                          "%.2f GiB / %.2f GiB (%s%d%%%s) (%s) @ (%s)",
+                          used_gib, total_gib, 
+                          pct_color, percentage_storage, Color::RESET, 
+                          fstype.c_str(), mountpoint.c_str());
         }
         result.push_back(std::string(buffer));
     }
@@ -374,8 +576,8 @@ std::string get_uptime_info() {
     int hours = total_minutes / 60;
 
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%d hour%s %d min",
-                  hours, hours == 1 ? "" : "s", minutes);
+    std::snprintf(buffer, sizeof(buffer), "%dh %dm",
+                  hours, minutes);
 
     return std::string(buffer);
 }
@@ -523,6 +725,47 @@ std::string get_os_age() {
     return std::to_string(days) + " days";
 }
 
+std::string get_ip() {
+    std::ifstream route_file("/proc/net/route");
+    if (!route_file.is_open()) return "N/A";
+
+    std::string line;
+    std::getline(route_file, line); 
+    std::string iface;
+
+    while (std::getline(route_file, line)) {
+        std::istringstream ss(line);
+        std::string iface_name, dest, gateway, flags;
+        ss >> iface_name >> dest >> gateway >> flags;
+        
+        if (dest == "00000000") {
+            iface = iface_name;
+            break;
+        }
+    }
+    route_file.close();
+
+    if (iface.empty()) return "N/A";
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return "N/A";
+
+    struct ifreq ifr;
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ - 1);
+
+    if (ioctl(fd, SIOCGIFADDR, &ifr) < 0) {
+        close(fd);
+        return "N/A";
+    }
+    close(fd);
+
+    char ip[INET_ADDRSTRLEN];
+    struct sockaddr_in* addr = (struct sockaddr_in*)&ifr.ifr_addr;
+    inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
+
+    return std::string(ip);
+}
 
 size_t get_utf8_visible_length(const std::string& str) {
     size_t length = 0;
@@ -547,8 +790,7 @@ std::string make_info_line(const std::string& label, const std::string& value, c
     }
     return std::string(label_color) + padded + Color::RESET + value;
 }
-
-
+ 
 struct Module {
     std::string  name;
     std::function<std::vector<std::string>()> render;
@@ -565,19 +807,49 @@ std::vector<Module> build_modules() {
         }, true},
         
         {"cpu", []{
+            std::string cpu_name = get_cpu_info();
+            std::string cpu_temp = get_cpu_temperature();
+            
+            if (cpu_temp != "N/A") {
+                    double temp_val = std::stod(cpu_temp);
+                    const char* temp_color;
+                    if (temp_val > 99) temp_color = Color::RED;
+                    else if (temp_val >= 68) temp_color = Color::YELLOW;
+                    else temp_color = Color::GREEN;
+                    
+                    cpu_name += " (" + std::string(temp_color) + cpu_temp + std::string(Color::RESET) + ")";
+                    cpu_name += std::string(Color::RESET    );
+                }
+            
             return std::vector<std::string>{
-                make_info_line("CPU", get_cpu_info(), Color::BRIGHT_GREEN)
+                make_info_line("CPU", cpu_name, Color::BRIGHT_GREEN)
             };
         }, true},
 
         {"gpu", []{
             std::vector<std::string> out;
             auto gpus = get_gpu_list();
+            
             for (size_t i = 0; i < gpus.size(); ++i) {
                 std::string label = (gpus.size() > 1)
                     ? "GPU [" + std::to_string(i + 1) + "]"
                     : "GPU";
-                out.push_back(make_info_line(label, gpus[i], Color::BRIGHT_GREEN));
+                std::string gpu_name = gpus[i];
+                
+                std::string gpu_temp = get_gpu_temperature(i);
+                
+                if (gpu_temp != "N/A") {
+                    double temp_val = std::stod(gpu_temp);
+                    const char* temp_color;
+                    if (temp_val > 85) temp_color = Color::RED;
+                    else if (temp_val >= 70) temp_color = Color::YELLOW;
+                    else temp_color = Color::GREEN;
+                    
+                    gpu_name += " (" + std::string(temp_color) + gpu_temp + std::string(Color::RESET) + ")";
+                    gpu_name += std::string(Color::RESET    );
+                }
+                
+                out.push_back(make_info_line(label, gpu_name, Color::BRIGHT_GREEN));
             }
             return out;
         }, true},
@@ -645,6 +917,11 @@ std::vector<Module> build_modules() {
                 make_info_line("Term", get_terminal_info(), Color::BRIGHT_YELLOW)
             };
         }, true},
+        {"ip", []{
+            return std::vector<std::string>{
+                make_info_line("IP", get_ip(), Color::BRIGHT_CYAN)
+            };
+        }, true},
 
         {"os_age", []{
             return std::vector<std::string>{
@@ -665,8 +942,6 @@ std::vector<Module> build_modules() {
         }, true},
     };
 }
-
-
 
 int main(int argc, char* argv[]) {
     std::vector<Module> modules = build_modules();
@@ -722,6 +997,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> logo_paths = {
         "logos/" + os_id + ".txt",
         "/usr/share/anfetch/logos/" + os_id + ".txt"
+        "/usr/local/share/anfetch/logos/" + os_id + ".txt"
     };
 
     if (os_id.rfind("ubuntu", 0) == 0 || os_id == "ubuntu") {
@@ -745,12 +1021,12 @@ int main(int argc, char* argv[]) {
         logo_paths.push_back("/usr/share/anfetch/logos/tumbleweed.txt");
     }
     if (os_id == "opensuse-leap") {
-        logo_paths.push_back("logos/opensuse.txt");
+        logo_paths.push_back("logos/type1/opensuse.txt");
         logo_paths.push_back("/usr/share/anfetch/logos/opensuse.txt");
     }
     if (os_id == "ghostbsd") {
-        logo_paths.push_back("logos/ghost.txt");
-        logo_paths.push_back("/usr/share/anfetch/logos/ghost.txt");
+        logo_paths.push_back("logos/type1/ghost.txt");
+        logo_paths.push_back("/usr/share/anfetch/logos/type1/ghost.txt");
     }
 
     std::ifstream logo_file;
@@ -760,7 +1036,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n";
-    
+
     if (logo_file.is_open()) {
         std::string line;
         while (std::getline(logo_file, line)) {
@@ -799,13 +1075,13 @@ int main(int argc, char* argv[]) {
         if (current_visible_width < max_visible_width) {
             std::cout << std::string(max_visible_width - current_visible_width, ' ');
         }
-        
+
         std::cout << "   ";
-        
+
         if (i < info_lines.size()) {
             std::cout << info_lines[i];
         }
-        
+
         std::cout << std::endl;
     }
 
