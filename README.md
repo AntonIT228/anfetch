@@ -1,4 +1,5 @@
-![Uploading 2026-11-19_19-55-31.png…]()
+<img width="1920" height="1080" alt="2026-11-19_19-55-31" src="https://github.com/user-attachments/assets/e6b39fb6-016c-4f3b-8452-1d8b7adb0b1c" />
+
 # anfetch
 
 A simple, modular system fetch tool written in C++ for Arch Linux.
