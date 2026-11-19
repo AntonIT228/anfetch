@@ -1,6 +1,6 @@
 # Maintainer: AntonIT228 <zelenukanton225@gmail.com>
 pkgname=anfetch
-pkgver=1.4.8
+pkgver=1.5.2
 pkgrel=1
 pkgdesc="A simple, modular system fetch tool written in C++"
 arch=('x86_64')
@@ -9,7 +9,7 @@ license=('Unlicense')
 depends=('gcc-libs')
 makedepends=('gcc')
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('761df843cd98eb7342335022e571de2ab71789ca49caab1be223f3af21518df9')
+sha256sums=('7ea26fd304154c5b905c0e1581e992f3c5c37f660b315294ff08fa85f4f05143')
 
 build() {
     cd "$pkgname-$pkgver"
